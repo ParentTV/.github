@@ -1,0 +1,112 @@
+name: Deploy to ECS
+
+# Reusable workflow: build a Docker image, push it to ECR, and deploy to
+# ECS Fargate. Authentication to AWS is via GitHub OIDC federation — no
+# long-lived AWS credentials are stored anywhere.
+#
+# Called by service repos with:
+#   uses: ParentTV/.github/.github/workflows/deploy-ecs.yml@main
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: "Logical service name (e.g. identity-service)"
+        required: true
+        type: string
+      ecr-repository:
+        description: "ECR repository name to push the image to"
+        required: true
+        type: string
+      ecs-cluster:
+        description: "Target ECS cluster name"
+        required: true
+        type: string
+      ecs-service:
+        description: "Target ECS service name"
+        required: true
+        type: string
+      task-definition:
+        description: "Path to the ECS task definition JSON in the calling repo"
+        required: true
+        type: string
+      container-name:
+        description: "Container name in the task definition to update"
+        required: true
+        type: string
+      aws-region:
+        description: "AWS region to deploy into"
+        required: false
+        type: string
+        default: "ap-southeast-2"
+      dockerfile:
+        description: "Path to the Dockerfile"
+        required: false
+        type: string
+        default: "./Dockerfile"
+      build-context:
+        description: "Docker build context"
+        required: false
+        type: string
+        default: "."
+    secrets:
+      AWS_DEPLOY_ROLE_ARN:
+        description: "IAM role ARN assumed via OIDC for deployment"
+        required: true
+
+# OIDC requires id-token: write. contents: read is needed to checkout.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy ${{ inputs.service-name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-${{ inputs.service-name }}-${{ github.run_id }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ inputs.ecr-repository }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -f "${{ inputs.dockerfile }}" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
+            "${{ inputs.build-context }}"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Render new task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ inputs.task-definition }}
+          container-name: ${{ inputs.container-name }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ inputs.ecs-service }}
+          cluster: ${{ inputs.ecs-cluster }}
+          wait-for-service-stability: true

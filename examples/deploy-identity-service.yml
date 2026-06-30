@@ -1,0 +1,30 @@
+# Example calling workflow.
+#
+# This lives in a service repo (e.g. ParentTV/identity-service) at
+# .github/workflows/deploy.yml and references the org-wide reusable
+# workflow defined in ParentTV/.github.
+#
+# It triggers on pushes to main and passes the per-service inputs through
+# to the reusable workflow. The AWS_DEPLOY_ROLE_ARN secret is inherited
+# from the org-level secret — no per-repo configuration required.
+
+name: Deploy identity-service
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ParentTV/.github/.github/workflows/deploy-ecs.yml@main
+    with:
+      service-name: identity-service
+      ecr-repository: identity-service
+      ecs-cluster: parenttv-prod
+      ecs-service: identity-service
+      task-definition: .aws/identity-service-task-definition.json
+      container-name: identity-service
+      aws-region: ap-southeast-2
+    secrets:
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
