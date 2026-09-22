@@ -49,6 +49,11 @@ on:
         required: false
         type: string
         default: "."
+      build-args:
+        description: "Newline-separated KEY=VALUE pairs passed to `docker build --build-arg`. Optional; empty by default, so every existing caller's build is unaffected."
+        required: false
+        type: string
+        default: ""
     secrets:
       AWS_DEPLOY_ROLE_ARN:
         description: "IAM role ARN assumed via OIDC for deployment"
@@ -85,9 +90,17 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           ECR_REPOSITORY: ${{ inputs.ecr-repository }}
           IMAGE_TAG: ${{ github.sha }}
+          BUILD_ARGS_INPUT: ${{ inputs.build-args }}
         run: |
+          # Empty by default for every existing caller - only produces
+          # --build-arg flags when a caller actually passes build-args.
+          BUILD_ARG_FLAGS=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && BUILD_ARG_FLAGS+=(--build-arg "$line")
+          done <<< "$BUILD_ARGS_INPUT"
           docker build \
             -f "${{ inputs.dockerfile }}" \
+            "${BUILD_ARG_FLAGS[@]}" \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
             "${{ inputs.build-context }}"
