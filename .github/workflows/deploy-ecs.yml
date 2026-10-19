@@ -58,6 +58,9 @@ on:
       AWS_DEPLOY_ROLE_ARN:
         description: "IAM role ARN assumed via OIDC for deployment"
         required: true
+      NPM_TOKEN:
+        description: "Optional. Token for private npm packages (GitHub Packages), passed to docker build as BuildKit secret id=npm_token. Never a build arg."
+        required: false
 
 # OIDC requires id-token: write. contents: read is needed to checkout.
 permissions:
@@ -91,6 +94,8 @@ jobs:
           ECR_REPOSITORY: ${{ inputs.ecr-repository }}
           IMAGE_TAG: ${{ github.sha }}
           BUILD_ARGS_INPUT: ${{ inputs.build-args }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DOCKER_BUILDKIT: "1"
         run: |
           # Empty by default for every existing caller - only produces
           # --build-arg flags when a caller actually passes build-args.
@@ -98,9 +103,14 @@ jobs:
           while IFS= read -r line; do
             [ -n "$line" ] && BUILD_ARG_FLAGS+=(--build-arg "$line")
           done <<< "$BUILD_ARGS_INPUT"
+          # Only callers that pass NPM_TOKEN get it, as a BuildKit secret (readable by a
+          # RUN --mount=type=secret,id=npm_token step, never stored in a layer).
+          SECRET_FLAGS=()
+          if [ -n "$NPM_TOKEN" ]; then SECRET_FLAGS+=(--secret "id=npm_token,env=NPM_TOKEN"); fi
           docker build \
             -f "${{ inputs.dockerfile }}" \
             "${BUILD_ARG_FLAGS[@]}" \
+            "${SECRET_FLAGS[@]}" \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
             "${{ inputs.build-context }}"
