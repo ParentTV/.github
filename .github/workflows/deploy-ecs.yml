@@ -62,10 +62,10 @@ on:
         description: "Optional. Token for private npm packages (GitHub Packages), passed to docker build as BuildKit secret id=npm_token. Never a build arg."
         required: false
 
-# OIDC requires id-token: write. contents: read is needed to checkout.
-permissions:
-  id-token: write
-  contents: read
+# No permissions block here on purpose: a called workflow can only narrow its caller's
+# GITHUB_TOKEN, and narrowing to id-token/contents would strip the packages: read that a caller
+# (admin) grants so its token can install private @parenttv packages. Every caller grants
+# id-token: write (OIDC) and contents: read (checkout) itself.
 
 jobs:
   deploy:
